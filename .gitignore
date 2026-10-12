@@ -1,0 +1,42 @@
+# History & Session Data
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj.user
+
+# R Environment & Cache
+.Renviron
+.Rcache/
+*.knit.md
+*.utf8.md
+
+# Secrets & Credentials (NEVER COMMIT)
+.env
+.env.*
+*.key
+*.pem
+kaggle.json
+*.token
+credentials.json
+*secret*
+
+# OS Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Large Raw Data Files (Keep documentation and sample structure)
+# Users should acquire insurance_claims.csv per data/README.md instructions
+data/insurance_claims.csv
+data/*.zip
+data/*.tar.gz
+
+# Serialized Model Binaries (optional to ignore large binaries)
+outputs/models/*.rds
+outputs/models/*.tar.gz
+
+# Temporary / Render scratch files
+*.log
+*.tmp
+*.bak

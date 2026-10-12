@@ -1,0 +1,3 @@
+model,pr_auc,recall,precision,f1_score,roc_auc,specificity,accuracy
+Informed Model,0.8923,0.8,0.6667,0.7273,0.9472,0.8667,0.85
+Naive Baseline,0.625,0,NA,NA,0.5,1,0.75

@@ -1,0 +1,4 @@
+model,pr_auc,recall,precision,f1_score,roc_auc,specificity,accuracy
+Decision Tree,0.6623,0.64,0.6957,0.6667,0.731,0.9073,0.8408
+XGBoost,0.6244,1,0.2488,0.3984,0.5,0,0.2488
+Logistic Regression,0.6161,0.68,0.5667,0.6182,0.8148,0.8278,0.791

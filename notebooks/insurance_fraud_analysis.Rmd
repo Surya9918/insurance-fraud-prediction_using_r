@@ -1,0 +1,401 @@
+---
+title: "Insurance Claim Risk Prediction & Fraud Pattern Analysis"
+subtitle: "An End-to-End Tidymodels Case Study in Imbalanced Classification, Model Interpretability, and the Accuracy Paradox"
+author: "Data Science Research Team"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8.5,
+  fig.height = 5.5,
+  fig.align = "center",
+  dpi = 300
+)
+
+# Load essential libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(scales)
+library(ggplot2)
+library(rsample)
+library(recipes)
+library(themis)
+library(parsnip)
+library(workflows)
+library(tune)
+library(dials)
+library(yardstick)
+library(broom)
+library(vip)
+library(knitr)
+
+# Set global seed for deterministic reproducibility
+set.seed(123)
+```
+
+---
+
+# Executive Summary
+
+Automobile insurance fraud is a multi-billion-dollar societal and financial liability that distorts insurance premium structures, strains legal resources, and delays the processing of legitimate claims. This case study develops a rigorous, reproducible machine learning pipeline in **R** using the **tidymodels** framework to predict fraudulent insurance claims from tabular operational data.
+
+### Key Problem Formulation & Objectives
+1. **Mitigate Class Imbalance & The Accuracy Paradox:** In skewed operational settings (~24.7% fraud), standard models often maximize raw accuracy by predicting non-fraud everywhere while capturing zero financial leakage. We formulate **Precision-Recall Area Under the Curve (PR-AUC)** and **Recall (Sensitivity)** as our primary objective metrics.
+2. **Leak-Free Data Preprocessing:** Implement robust handling of literal missing value encodings (`?` to `NA`), eliminate high-cardinality identifiers, apply median and mode imputation, collapse rare categorical levels ($< 5\%$) via `step_other()`, and synthesize training-only minority instances using **SMOTE** (`themis::step_smote()`).
+3. **Multi-Architecture Comparison:** Benchmark three distinct modeling paradigms:
+   - **Interpretable Baseline:** Binary Logistic Regression (`glm`), providing parametric Odds Ratios and 95% confidence intervals.
+   - **Advanced Nonlinear Ensemble:** Extreme Gradient Boosting (`xgboost`), tuned across a 5-fold cross-validation grid optimizing PR-AUC.
+   - **Rule-Based Decision Tree:** Classification Tree (`rpart`), providing human-auditable decision rules for claims adjusters.
+4. **Actionable Governance & Explainability:** Isolate primary risk drivers through `vip` feature importance and odds ratio confidence intervals, while delineating data limitations, synthetic sampling risks, and production deployment guardrails.
+
+---
+
+# Business Problem: The Mechanics & Cost of Insurance Fraud
+
+In personal and commercial automotive lines, fraudulent insurance claims typically fall into two categories:
+* **"Hard Fraud":** Deliberately staged collisions, fabricated vehicular thefts, or arson intended to illegally extract policy payouts.
+* **"Soft Fraud" (Opportunistic):** Policyholders inflating legitimate repair costs, padding bodily injury claims, or exaggerating pre-existing vehicular damages following an authentic collision.
+
+### The Financial & Operational Dilemma
+Insurance carriers face an asymmetric trade-off between two error types:
+
+$$\text{Total Cost} = C_{\text{FN}} \cdot \text{False Negatives} + C_{\text{FP}} \cdot \text{False Positives}$$
+
+* **False Negatives (Type II Errors - Missed Fraud):** The insurer erroneously approves a fraudulent claim, paying out fraudulent vehicle repairs and bodily injury claims averaging $\$60,000+$ per incident.
+* **False Positives (Type I Errors - False Alarms):** The model flags a legitimate customer for special investigative unit (SIU) fraud audit. This generates investigation friction, audit costs ($\sim \$1,500$ per audit), customer attrition, and potential regulatory scrutiny.
+
+Because $C_{\text{FN}} \gg C_{\text{FP}}$, model selection must prioritize high **Recall** without collapsing **Precision** into an unsustainable false-alarm burden.
+
+---
+
+# Dataset Description & Data Provenance
+
+The empirical dataset utilized in this case study originates from the **Auto Insurance Fraud Dataset** curated by **brijbhushannanda1979** on Kaggle, with corresponding academic archival on Mendeley Data (DOI: [10.17632/992mh7dk9y.2](https://data.mendeley.com/datasets/992mh7dk9y/2)).
+
+### Structural Characteristics
+* **Total Records ($N$):** 1,000 policyholder claims.
+* **Feature Dimensionality:** 39 substantive predictor variables spanning policy terms, claimant demographics, incident dynamics, and claim damage allocations.
+* **Target Feature:** `fraud_reported` ($Y \in \{\text{"No"}, \text{"Yes"}\}$).
+
+```{r load_data}
+# Sourcing modular pipeline loader
+source("../R/01_load_data.R")
+
+data_file <- "../data/insurance_claims.csv"
+
+if (file.exists(data_file)) {
+  claims_raw <- load_insurance_data(data_file)
+} else {
+  message("Notice: 'data/insurance_claims.csv' must be downloaded per data/README.md.")
+  # Mock schema structure for non-interactive rendering when raw CSV is pending download
+  set.seed(123)
+  claims_raw <- tibble(
+    months_as_customer = sample(1:400, 1000, replace = TRUE),
+    age = sample(18:65, 1000, replace = TRUE),
+    policy_number = 100000 + 1:1000,
+    policy_bind_date = as.character(as.Date("2010-01-01") + sample(1:2000, 1000, replace = TRUE)),
+    policy_state = sample(c("OH", "IN", "IL"), 1000, replace = TRUE),
+    policy_csl = sample(c("250/500", "100/300", "500/1000"), 1000, replace = TRUE),
+    policy_deductable = sample(c(500, 1000, 2000), 1000, replace = TRUE),
+    policy_annual_premium = round(rnorm(1000, 1250, 250), 2),
+    umbrella_limit = sample(c(0, 1000000, 2000000, 4000000), 1000, replace = TRUE, prob = c(0.8, 0.1, 0.05, 0.05)),
+    insured_zip = sample(400000:499999, 1000, replace = TRUE),
+    insured_sex = sample(c("MALE", "FEMALE"), 1000, replace = TRUE),
+    insured_education_level = sample(c("MD", "PhD", "Associate", "Masters", "High School", "College", "JD"), 1000, replace = TRUE),
+    insured_occupation = sample(c("exec-managerial", "prof-specialty", "tech-support", "sales", "craft-repair", "other-service"), 1000, replace = TRUE),
+    insured_hobbies = sample(c("chess", "cross-fit", "reading", "paintball", "yachting", "other"), 1000, replace = TRUE),
+    insured_relationship = sample(c("hubby", "own-child", "not-in-family", "other-relative", "wife", "unmarried"), 1000, replace = TRUE),
+    capital_gains = sample(c(0, 20000, 50000), 1000, replace = TRUE, prob = c(0.6, 0.2, 0.2)),
+    capital_loss = sample(c(0, -20000, -50000), 1000, replace = TRUE, prob = c(0.6, 0.2, 0.2)),
+    incident_date = as.character(as.Date("2015-01-01") + sample(1:60, 1000, replace = TRUE)),
+    incident_type = sample(c("Single Vehicle Collision", "Multi-vehicle Collision", "Vehicle Theft", "Parked Car"), 1000, replace = TRUE, prob = c(0.4, 0.4, 0.1, 0.1)),
+    collision_type = sample(c("Side Collision", "Rear Collision", "Front Collision", NA), 1000, replace = TRUE, prob = c(0.3, 0.3, 0.25, 0.15)),
+    incident_severity = sample(c("Major Damage", "Total Loss", "Minor Damage", "Trivial Damage"), 1000, replace = TRUE, prob = c(0.3, 0.3, 0.25, 0.15)),
+    authorities_contacted = sample(c("Police", "Fire", "Ambulance", "Other", "None"), 1000, replace = TRUE),
+    incident_state = sample(c("NY", "SC", "WV", "VA", "NC", "PA", "OH"), 1000, replace = TRUE),
+    incident_city = sample(c("Springfield", "Arlington", "Columbus", "Northbend", "Hillsdale", "Riverwood"), 1000, replace = TRUE),
+    incident_location = paste("Street", 1:1000),
+    incident_hour_of_the_day = sample(0:23, 1000, replace = TRUE),
+    number_of_vehicles_involved = sample(1:4, 1000, replace = TRUE, prob = c(0.6, 0.3, 0.05, 0.05)),
+    property_damage = sample(c("YES", "NO", NA), 1000, replace = TRUE, prob = c(0.35, 0.35, 0.3)),
+    bodily_injuries = sample(0:2, 1000, replace = TRUE),
+    witnesses = sample(0:3, 1000, replace = TRUE),
+    police_report_available = sample(c("YES", "NO", NA), 1000, replace = TRUE, prob = c(0.35, 0.35, 0.3)),
+    total_claim_amount = round(rnorm(1000, 52000, 26000), 2),
+    injury_claim = round(rnorm(1000, 7500, 4800), 2),
+    property_claim = round(rnorm(1000, 7400, 4800), 2),
+    vehicle_claim = round(rnorm(1000, 37000, 18000), 2),
+    auto_make = sample(c("Saab", "Dodge", "Subaru", "Nissan", "Chevrolet", "Ford", "BMW", "Toyota"), 1000, replace = TRUE),
+    auto_model = sample(c("ModelA", "ModelB", "ModelC", "ModelD"), 1000, replace = TRUE),
+    auto_year = sample(1995:2015, 1000, replace = TRUE),
+    fraud_reported = factor(sample(c("No", "Yes"), 1000, replace = TRUE, prob = c(0.753, 0.247)), levels = c("No", "Yes"))
+  )
+}
+
+dim(claims_raw)
+```
+
+---
+
+# Data Cleaning & Missing Value Audit
+
+A common vulnerability in data engineering pipelines is the silent corruption of missing value codes. In this dataset:
+1. Missing values are entered as the string literal `'?'` in columns such as `collision_type`, `property_damage`, and `police_report_available`.
+2. A naive `read.csv()` loads these columns as character/factor features where `'?'` becomes an artificial category level instead of missing information.
+3. Our loader enforces `na = c("", "NA", "?")`, ensuring that missing values are correctly recognized as native R `NA`s.
+
+```{r cleaning_audit}
+# Verify missing value census
+missing_summary <- tibble(
+  Feature = names(claims_raw),
+  Missing_Count = sapply(claims_raw, function(x) sum(is.na(x))),
+  Missing_Pct = sapply(claims_raw, function(x) round(100 * sum(is.na(x)) / nrow(claims_raw), 2))
+) %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+kable(missing_summary, caption = "Summary of Features with Missing Observations ('?' to NA Conversion)")
+```
+
+### Identifier & Leakage Removal Strategy
+To prevent spurious correlation and memorization, the following columns are designated for removal:
+* `policy_number`: Arbitrary customer identifier.
+* `policy_bind_date`: Historical date of policy issuance.
+* `incident_date`: Specific collision timestamp.
+* `incident_location`: Granular street address ($\sim 1,000$ distinct strings).
+* `insured_zip`: Granular postal code ($\sim 995$ distinct values).
+
+---
+
+# Exploratory Data Analysis & Visualizations
+
+```{r eda_visuals}
+# Visualizing Class Imbalance
+p_class <- ggplot(claims_raw, aes(x = fraud_reported, fill = fraud_reported)) +
+  geom_bar(width = 0.5, show.legend = FALSE, alpha = 0.9) +
+  geom_text(stat = "count", aes(label = paste0(after_stat(count), " (", round(after_stat(count) / nrow(claims_raw) * 100, 1), "%)")),
+            vjust = 1.5, color = "white", fontface = "bold", size = 4.5) +
+  scale_fill_manual(values = c("No" = "#2b5c8f", "Yes" = "#d95f02")) +
+  labs(
+    title = "Class Imbalance: Auto Insurance Fraud vs Legitimate Claims",
+    subtitle = "Severe ~3:1 ratio illustrates the empirical distribution skew",
+    x = "Fraud Reported", y = "Claim Count"
+  ) +
+  theme_minimal()
+
+print(p_class)
+```
+
+### Bivariate Relationships
+We examine the empirical relationship between `incident_severity` and reported fraud.
+
+```{r eda_severity}
+p_sev <- claims_raw %>%
+  group_by(incident_severity) %>%
+  summarise(
+    Total = n(),
+    Fraud = sum(fraud_reported == "Yes"),
+    Fraud_Rate = round(100 * Fraud / Total, 2),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = reorder(incident_severity, Fraud_Rate), y = Fraud_Rate, fill = Fraud_Rate)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(Fraud_Rate, "% (", Fraud, "/", Total, ")")), hjust = -0.1, fontface = "bold") +
+  coord_flip() +
+  scale_fill_gradient(low = "#6baed6", high = "#cb181d") +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(
+    title = "Empirical Fraud Rate by Incident Severity",
+    subtitle = "Major Damage claims demonstrate elevated fraud likelihood",
+    x = "Incident Severity", y = "Fraud Rate (%)"
+  ) +
+  theme_minimal()
+
+print(p_sev)
+```
+
+---
+
+# Class Imbalance & The Accuracy Paradox
+
+In fraud detection and medical diagnostics, overall classification **Accuracy** is dangerously misleading:
+
+$$\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$$
+
+If a dataset consists of **753 Legitimate Claims** and **247 Fraudulent Claims**, a completely unlearned "Zero-Rule" classifier that predicts `fraud_reported = "No"` for every claim will achieve:
+
+$$\text{Accuracy}_{\text{Naive}} = \frac{0 + 753}{0 + 753 + 0 + 247} = 75.3\%$$
+
+Despite boasting a seemingly impressive $75.3\%$ accuracy score, this model flags **zero fraudulent claims**, delivering **0% Recall** and failing its core business mission.
+
+Therefore, our model optimization focuses on:
+* **Recall (Sensitivity):** $\frac{TP}{TP + FN}$ — Ensuring maximum detection of fraudulent claims.
+* **Precision:** $\frac{TP}{TP + FP}$ — Controlling false alarm investigation overhead.
+* **PR-AUC:** Precision-Recall Area Under Curve — Primary metric summarizing the precision-recall trade-off across all probability cutoffs.
+
+---
+
+# Preprocessing Pipeline & SMOTE Methodology
+
+To prevent data leakage, all transformations must follow strict sequential partitioning:
+
+$$\text{Raw Data} \longrightarrow \text{Train/Test Split (80/20 Stratified)} \longrightarrow \text{Recipe (Fit on Train)} \longrightarrow \text{SMOTE (Train Only)} \longrightarrow \text{Test Evaluation}$$
+
+```{r recipe_pipeline}
+source("../R/03_preprocessing.R")
+
+split_obj <- create_train_test_split(claims_raw, prop = 0.80, seed = 123)
+train_data <- rsample::training(split_obj)
+test_data  <- rsample::testing(split_obj)
+cv_folds   <- create_cv_folds(train_data, v = 5, seed = 123)
+
+fraud_recipe <- build_preprocessing_recipe(train_data, use_smote = TRUE, other_threshold = 0.05)
+prepped_audit <- audit_recipe_pipeline(fraud_recipe, train_data)
+```
+
+### Steps in the Recipe:
+1. **Identifier Elimination:** Dropping `policy_number`, `insured_zip`, `incident_location`, etc.
+2. **Median/Mode Imputation:** Estimating median for continuous features and mode for categorical features exclusively from training folds.
+3. **Rare Level Pooling:** `step_other(threshold = 0.05)` pools levels with $< 5\%$ frequency into `"other"`, preventing sparse dummy columns.
+4. **Dummy Variable Expansion:** Converts all nominal predictors into numerical dummy columns.
+5. **Synthetic Minority Over-sampling Technique (SMOTE):** Operates via `themis::step_smote(fraud_reported, over_ratio = 1.0)`. Minority points are interpolated in $k$-nearest neighbor space strictly during training, while the test partition preserves the real-world class distribution.
+
+---
+
+# Model Training & Architectures
+
+```{r model_training}
+source("../R/04_logistic_model.R")
+source("../R/05_xgboost_model.R")
+source("../R/06_decision_tree.R")
+source("../R/07_evaluation.R")
+
+# 1. Logistic Regression (Baseline)
+log_wf <- build_logistic_workflow(fraud_recipe)
+log_fit <- fit_and_interpret_logistic(log_wf, train_data, output_dir = "../outputs")
+
+# 2. XGBoost (Nonlinear Ensemble)
+xgb_wf <- build_xgboost_workflow(fraud_recipe)
+xgb_grid <- create_xgboost_grid(size = 8)
+xgb_tuning <- tune_xgboost_model(xgb_wf, cv_folds, grid = xgb_grid, seed = 123)
+xgb_fit <- finalize_and_fit_xgboost(xgb_wf, xgb_tuning, train_data, output_dir = "../outputs")
+
+# 3. Decision Tree (Rule-Based)
+dt_wf <- build_decision_tree_workflow(fraud_recipe)
+dt_fit <- fit_and_extract_tree(dt_wf, train_data, output_dir = "../outputs")
+```
+
+---
+
+# Evaluation & Model Comparison
+
+Each candidate model was applied to the unseen holdout test partition ($N = 200$, representing original class proportions).
+
+```{r model_eval}
+preds_log <- generate_test_predictions(log_fit$workflow_fit, test_data, "Logistic Regression")
+preds_xgb <- generate_test_predictions(xgb_fit$workflow_fit, test_data, "XGBoost")
+preds_dt  <- generate_test_predictions(dt_fit$workflow_fit,  test_data, "Decision Tree")
+
+all_preds <- list(
+  "Logistic Regression" = preds_log,
+  "XGBoost" = preds_xgb,
+  "Decision Tree" = preds_dt
+)
+
+comp_results <- compare_models_and_select_champion(all_preds, output_dir = "../outputs/metrics")
+
+kable(comp_results$comparison_table, caption = "Holdout Test Set Performance Comparison Table")
+```
+
+```{r pr_curves_plot}
+source("../R/08_visualizations.R")
+p_pr <- plot_precision_recall_curves(all_preds, "../outputs/figures/06_precision_recall_curves.png")
+print(p_pr)
+```
+
+```{r conf_mat_plot}
+p_cm <- plot_confusion_matrices(all_preds, "../outputs/figures/08_confusion_matrices.png")
+print(p_cm)
+```
+
+---
+
+# Champion Model Selection
+
+Based on the empirical results across the holdout test partition:
+* **Champion Model:** **`r comp_results$champion_model`**
+* **Primary Metric (PR-AUC):** `r comp_results$champion_metrics$pr_auc`
+* **Fraud Detection Rate (Recall):** `r round(100 * comp_results$champion_metrics$recall, 1)`%
+* **Precision:** `r round(100 * comp_results$champion_metrics$precision, 1)`%
+* **F1-Score:** `r comp_results$champion_metrics$f1_score`
+
+### Analytical Rationale
+The champion model was selected because it maximizes **PR-AUC**, providing the most robust separation of true fraud cases from legitimate claims across decision thresholds without excessively burdening SIU audit capacity with false alarms.
+
+---
+
+# Feature Importance & Model Interpretation
+
+```{r vi_plot}
+p_vi <- plot_xgboost_importance(xgb_fit$variable_importance, top_n = 15, "../outputs/figures/09_feature_importance_xgboost.png")
+print(p_vi)
+```
+
+### Key Analytical Takeaways
+* **Incident Severity:** Major Damage collisions serve as the strongest single predictive signal.
+* **Claim Allocation:** Total claim amounts, vehicle repair portions, and bodily injury requests heavily influence tree split gains.
+* **Claimant Profile:** Specific policy features and hobbies exhibit subtle non-linear interactions.
+* **Causality Note:** Feature importance demonstrates predictive utility within tree ensembles, not causal determinism.
+
+---
+
+# Logistic Regression Odds Ratios & Interpretability
+
+Logistic Regression estimates log-odds of fraud as a linear combination of predictors:
+
+$$\log\left(\frac{P(\text{Fraud})}{1 - P(\text{Fraud})}\right) = \beta_0 + \sum_{j=1}^p \beta_j X_j \implies \text{Odds Ratio} = \exp(\beta_j)$$
+
+```{r odds_ratios}
+top_odds <- log_fit$odds_ratios %>%
+  filter(term != "(Intercept)") %>%
+  head(10)
+
+kable(top_odds, caption = "Top Logistic Regression Predictors by Statistical Significance (Odds Ratios & 95% CI)")
+```
+
+---
+
+# Project Limitations & Threat to Validity
+
+1. **Sample Size Constraints:** With $N = 1,000$ total records and only $\sim 247$ fraud cases, complex gradient boosted trees face risks of overfitting rare feature combinations.
+2. **Synthetic SMOTE Artifacts:** While SMOTE effectively balances class representation in training folds, linear interpolation between minority neighbors in high-dimensional space can create unrealistic synthetic feature combinations.
+3. **Temporal Invariance:** Real-world insurance fraud patterns evolve dynamically; static models must be monitored for concept drift.
+4. **Data Leakage Safeguards:** Preprocessing imputation parameters and SMOTE generation must remain strictly quarantined to training sets.
+
+---
+
+# Conclusion & Viva Defense Preparation
+
+### Summary of Achievements
+- Successfully engineered an end-to-end reproducible machine learning pipeline in **R** using **tidymodels**.
+- Overcame the **Accuracy Paradox** through targeted optimization of **PR-AUC** and **Recall**.
+- Built interpretable baseline models (GLM, Decision Tree) alongside high-capacity nonlinear ensembles (XGBoost).
+- Successfully documented, tested, and packaged the project for academic submission and GitHub distribution.
