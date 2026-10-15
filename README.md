@@ -267,6 +267,8 @@ insurance-fraud-risk-prediction/
 
 ### Step 1: Clone Repository
 ```bash
+git clone https://github.com/Surya9918/insurance-fraud-prediction_using_r.git
+cd insurance-fraud-prediction_using_r
 ```
 
 ### Step 2: Acquire Dataset
