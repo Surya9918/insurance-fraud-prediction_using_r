@@ -1,4 +1,4 @@
-# ðŸš— Insurance Claim Risk Prediction & Fraud Pattern Analysis
+# Insurance Claim Risk Prediction & Fraud Pattern Analysis in R
 
 [![R](https://img.shields.io/badge/Language-R%204.3+-blue.svg)](https://www.r-project.org/)
 [![Framework](https://img.shields.io/badge/Framework-Tidymodels-orange.svg)](https://www.tidymodels.org/)
@@ -10,16 +10,16 @@
 
 ---
 
-## ðŸ“Œ Overview
+## Overview
 
 Insurance fraud is a major challenge for insurers because fraudulent claims are often hidden among a much larger number of legitimate claims. This project develops an end-to-end **machine learning pipeline in R** to identify potentially fraudulent auto insurance claims.
 
 The project formulates, tunes, and compares three classification models:
-- **Logistic Regression** â€” interpretable statistical baseline with odds ratio estimation
-- **XGBoost (Calibrated)** â€” advanced nonlinear gradient-boosted ensemble
-- **Decision Tree (`rpart`)** â€” interpretable rule-based classifier for visual adjuster auditing
+- **Logistic Regression** -- interpretable statistical baseline with odds ratio estimation
+- **XGBoost (Calibrated)** -- advanced nonlinear gradient-boosted ensemble
+- **Decision Tree (`rpart`)** -- interpretable rule-based classifier for visual adjuster auditing
 
-The project specifically focuses on resolving the **Accuracy Paradox** associated with imbalanced classification problems ($24.7\%$ fraud prevalence). Rather than misleading raw accuracy, model performance is evaluated using:
+The project specifically focuses on resolving the **Accuracy Paradox** associated with imbalanced classification problems (24.7% fraud prevalence). Rather than relying on misleading raw accuracy, model performance is evaluated using:
 - **PR-AUC** (Precision-Recall AUC - Primary Metric)
 - **Recall / Sensitivity** (capturing true fraud losses)
 - **Precision** (minimizing audit false alarms)
@@ -27,7 +27,7 @@ The project specifically focuses on resolving the **Accuracy Paradox** associate
 - **ROC-AUC & Specificity**
 - **Confusion Matrix Breakdown**
 
-### ðŸŽ¯ Key Objectives
+### Key Objectives
 1. Clean and preprocess raw auto insurance claims, handling missing values denoted by `'?'`.
 2. Audit and eliminate target, identifier, and temporal leakage vectors.
 3. Handle rare categorical levels and class imbalance via training-fold **SMOTE**.
@@ -75,11 +75,11 @@ The project specifically focuses on resolving the **Accuracy Paradox** associate
 
 ### The Asymmetric Cost of Fraud
 Automobile insurance fraud costs insurers and policyholders billions of dollars annually. When reviewing claims, insurance carriers navigate an asymmetric cost structure:
-* **False Negatives (Missed Fraud):** Costliest error. Insurers pay fraudulent claims averaging $\$50,000 - \$80,000$ in vehicle replacement and medical padding.
-* **False Positives (False Alarms):** Investigative burden. Legitimate claims flagged for audit require investigation costs ($\sim \$1,500$) and induce customer friction.
+* **False Negatives (Missed Fraud):** Costliest error. Insurers pay fraudulent claims averaging \$50,000 - \$80,000 in vehicle replacement and medical padding.
+* **False Positives (False Alarms):** Investigative burden. Legitimate claims flagged for audit require investigation costs (~ \$1,500) and induce customer friction.
 
 ### The Accuracy Paradox
-The dataset exhibits natural class skew with $\approx 24.7\%$ fraudulent claims ($75.3\%$ legitimate):
+The dataset exhibits natural class skew with ~24.7% fraudulent claims (75.3% legitimate):
 $$\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$$
 A naive "Zero-Rule" model that predicts every claim as **"No Fraud"** achieves **75.3% accuracy**, yet detects **0% of fraudulent claims** ($\text{Recall} = 0\%$). Raw accuracy is fundamentally uninformative in fraud detection. 
 
@@ -93,22 +93,33 @@ The project implements a strictly leak-free machine learning workflow:
 
 ```
 Dataset (Raw CSV)
-   â†“
-Data Cleaning (? converted to NA, artifact removal)
-   â†“
-Train/Test Split (80/20 Stratified Partitioning)
-   â†“
-Preprocessing Recipe (Imputation, Rare-Level Pooling, Dummy Encoding)
-   â†“
-SMOTE (Training Data ONLY via themis::step_smote)
-   â†“
+   │
+   ▼
+Data Cleaning ('?' converted to NA, artifact removal)
+   │
+   ▼
+Train/Test Split (80/20 Stratified Partitioning, Seed = 123)
+   │
+   ▼
+Preprocessing Recipe (Median/Mode Imputation, step_other, step_dummy)
+   │
+   ▼
+SMOTE Balancing (Training Data ONLY via themis::step_smote)
+   │
+   ▼
 Model Training (Logistic Regression, XGBoost, Decision Tree via 5-Fold CV)
-   â†“
-Evaluation (Holdout Test Set on Real-World Class Distribution)
-   â†“
+   │
+   ▼
+Probability Calibration & Threshold Tuning (θ = 0.18 - 0.20)
+   │
+   ▼
+Evaluation (Holdout Test Set N = 201 on Real-World Class Distribution)
+   │
+   ▼
 Model Comparison (PR-AUC, Recall, Precision, F1, ROC-AUC)
-   â†“
-Fraud Risk Insights & Champion Model Selection
+   │
+   ▼
+Deployment & Interactive Web UI (ShieldClaims Risk Intelligence Dashboard)
 ```
 
 ---
@@ -129,7 +140,7 @@ The pipeline leverages a modular **Tidymodels recipe** (`R/03_preprocessing.R`):
 1. **Identifier & Leakage Elimination:** Drops non-predictive identifiers (`policy_number`, `insured_zip`, `incident_location`) and temporal date markers (`policy_bind_date`, `incident_date`) that encourage memorization.
 2. **Numeric Imputation:** `step_impute_median()` imputes continuous missing values using medians learned solely from training data.
 3. **Nominal Imputation:** `step_impute_mode()` fills categorical gaps using training modes.
-4. **Rare Category Collapsing:** `step_other(threshold = 0.05)` pools categorical levels with $< 5\%$ frequency into `"other"` to prevent sparse columns and rank deficiency.
+4. **Rare Category Collapsing:** `step_other(threshold = 0.05)` pools categorical levels with < 5% frequency into `"other"` to prevent sparse columns and rank deficiency.
 5. **Dummy Encoding:** `step_dummy()` expands nominal predictors into binary numeric indicators for compatibility with GLM and XGBoost.
 6. **Zero-Variance Filtering:** `step_zv()` removes degenerate non-varying columns.
 7. **SMOTE Balancing:** `themis::step_smote(fraud_reported)` interpolates synthetic minority points in feature space. **SMOTE is applied strictly to training partitions and never touches the test set.**
@@ -146,6 +157,7 @@ The pipeline leverages a modular **Tidymodels recipe** (`R/03_preprocessing.R`):
 ### 2. Extreme Gradient Boosting (`xgboost` - Nonlinear Ensemble)
 * **Role:** High-capacity nonlinear ensemble capturing complex feature interactions.
 * **Hyperparameter Tuning:** 5-fold cross-validation grid search tuning `trees`, `tree_depth`, `learn_rate`, `min_n`, `loss_reduction`, and `sample_size` targeting PR-AUC.
+* **Calibration & Threshold Tuning:** Scale-positive weight balancing combined with operational threshold tuning ($\theta = 0.18 - 0.20$) matching the natural fraud prevalence.
 * **Interpretability:** Variable importance extracted via `vip::vi()`.
 
 ### 3. Decision Tree (`rpart` - Rule-Based)
@@ -156,19 +168,19 @@ The pipeline leverages a modular **Tidymodels recipe** (`R/03_preprocessing.R`):
 
 ## 7. Evaluation Metrics & Methodology
 
-Metrics are computed on the **unseen holdout test partition ($N = 200$)** with `event_level = "second"` ensuring `"Yes"` is evaluated as the event:
+Metrics are computed on the **unseen holdout test partition ($N = 201$)** with `event_level = "second"` ensuring `"Yes"` is evaluated as the event:
 * **PR-AUC (Primary):** Measures precision-recall trade-off under severe class skew.
 * **Recall / Sensitivity:** Measures proportion of true fraudulent claims captured: $\frac{TP}{TP + FN}$.
 * **Precision:** Measures proportion of fraud alarms that are authentic: $\frac{TP}{TP + FP}$.
 * **F1-Score:** Harmonic mean of precision and recall.
-* **ROC-AUC & Specificity:** Measures general discriminatory ability.
+* **ROC-AUC & Specificity:** Measures general discriminatory ability across thresholds.
 * **Confusion Matrix:** Full $2 \times 2$ matrix with $TP, FP, TN, FN$ labeled.
 
 ---
 
 ## 8. Empirical Results & Model Comparison
 
-| Model | PR-AUC | Recall | Precision | F1-Score | ROC-AUC | Specificity | Accuracy | Optimal Threshold |
+| Model | PR-AUC | Recall | Precision | F1-Score | ROC-AUC | Specificity | Accuracy | Decision Threshold |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **XGBoost (Calibrated)** | 0.634 | **0.700** | **0.700** | **0.700** | **0.829** | 0.901 | **0.851** | **0.18 - 0.20** |
 | **Decision Tree** | **0.662** | 0.640 | 0.696 | 0.667 | 0.731 | **0.907** | 0.841 | 0.50 |
@@ -199,7 +211,7 @@ Metrics are computed on the **unseen holdout test partition ($N = 200$)** with `
 4. **`incident_type_Single_Vehicle_Collision`:** Single-car collisions present higher risk profiles than multi-vehicle accidents with independent drivers.
 
 ### Logistic Regression Odds Ratios
-* **Major Damage vs Minor:** $\text{OR} \approx 4.82$ ($p < 0.001$, $95\%\text{ CI: } [2.85, 8.16]$) â€” Holding all else constant, major collision damage is associated with a nearly five-fold increase in the estimated odds of fraud.
+* **Major Damage vs Minor:** $\text{OR} \approx 4.82$ ($p < 0.001$, $95\%\text{ CI: } [2.85, 8.16]$) -- Holding all else constant, major collision damage is associated with a nearly five-fold increase in the estimated odds of fraud.
 * **Total Claim Amount (per \$10k increase):** $\text{OR} \approx 1.28$ ($p < 0.01$).
 
 ---
@@ -208,53 +220,53 @@ Metrics are computed on the **unseen holdout test partition ($N = 200$)** with `
 
 ```
 insurance-fraud-risk-prediction/
-â”‚
-â”œâ”€â”€ README.md                          # Comprehensive GitHub documentation
-â”œâ”€â”€ LICENSE                            # MIT License
-â”œâ”€â”€ .gitignore                         # R, cache, and credential exclusions
-â”œâ”€â”€ .Rprofile                          # Global R project environment settings
-â”œâ”€â”€ run_pipeline.R                     # Master pipeline execution script
-â”œâ”€â”€ run_app.R                          # Standalone launcher for Shiny enterprise app
-â”œâ”€â”€ app.R                              # Full interactive R Shiny application
-â”‚
-â”œâ”€â”€ data/
-â”‚   â”œâ”€â”€ README.md                      # Data provenance, dictionary, & acquisition
-â”‚   â”œâ”€â”€ download_data.sh               # Automated acquisition helper
-â”‚   â””â”€â”€ test_claims.csv                # Holdout test claims partition for batch auditing
-â”‚
-â”œâ”€â”€ R/
-â”‚   â”œâ”€â”€ 01_load_data.R                 # Ingestion, '?' conversion, & factor validation
-â”‚   â”œâ”€â”€ 02_eda.R                       # Exploratory analysis & statistical profiling
-â”‚   â”œâ”€â”€ 03_preprocessing.R             # Tidymodels recipe, imputation, & SMOTE
-â”‚   â”œâ”€â”€ 04_logistic_model.R            # GLM baseline & Odds Ratios extraction
-â”‚   â”œâ”€â”€ 05_xgboost_model.R             # Tunable XGBoost & variable importance
-â”‚   â”œâ”€â”€ 06_decision_tree.R             # rpart classifier & rule extraction
-â”‚   â”œâ”€â”€ 07_evaluation.R                # PR-AUC, metrics suite, & champion selection
-â”‚   â”œâ”€â”€ 08_visualizations.R            # High-resolution ggplot2 publication figures
-â”‚   â””â”€â”€ shiny_helpers.R                # UI helper functions, metrics loader, batch scorer
-â”‚
-â”œâ”€â”€ www/
-â”‚   â””â”€â”€ styles.css                     # Custom enterprise CSS styling for Shiny app
-â”‚
-â”œâ”€â”€ scratch/                           # Model calibration and threshold tuning experiments
-â”‚
-â”œâ”€â”€ notebooks/
-â”‚   â””â”€â”€ insurance_fraud_analysis.Rmd   # Academic case study report (15 sections)
-â”‚
-â”œâ”€â”€ reports/
-â”‚   â””â”€â”€ insurance_fraud_analysis.html  # Compiled standalone academic HTML report
-â”‚
-â”œâ”€â”€ outputs/
-â”‚   â”œâ”€â”€ figures/                       # Publication plots (PR curves, ROC, VIP, etc.)
-â”‚   â”œâ”€â”€ metrics/                       # CSV summaries of evaluations & Odds Ratios
-â”‚   â””â”€â”€ models/                        # Serialized fitted Tidymodels workflows
-â”‚
-â””â”€â”€ tests/
-    â”œâ”€â”€ testthat.R                     # Unit testing harness
-    â””â”€â”€ testthat/
-        â”œâ”€â”€ test-01_load_data.R        # Tests for missing values & factor levels
-        â”œâ”€â”€ test-02_preprocessing.R    # Tests for recipe steps & zero leakage
-        â””â”€â”€ test-03_evaluation.R       # Tests for metrics & Accuracy Paradox
+│
+├── README.md                          # Comprehensive GitHub documentation
+├── LICENSE                            # MIT License
+├── .gitignore                         # R, cache, and credential exclusions
+├── .Rprofile                          # Global R project environment settings
+├── run_pipeline.R                     # Master pipeline execution script
+├── run_app.R                          # Standalone launcher for Shiny enterprise app
+├── app.R                              # Full interactive R Shiny application
+│
+├── data/
+│   ├── README.md                      # Data provenance, dictionary, & acquisition
+│   ├── download_data.sh               # Automated acquisition helper
+│   └── test_claims.csv                # Holdout test claims partition for batch auditing
+│
+├── R/
+│   ├── 01_load_data.R                 # Ingestion, '?' conversion, & factor validation
+│   ├── 02_eda.R                       # Exploratory analysis & statistical profiling
+│   ├── 03_preprocessing.R             # Tidymodels recipe, imputation, & SMOTE
+│   ├── 04_logistic_model.R            # GLM baseline & Odds Ratios extraction
+│   ├── 05_xgboost_model.R             # Tunable XGBoost & variable importance
+│   ├── 06_decision_tree.R             # rpart classifier & rule extraction
+│   ├── 07_evaluation.R                # PR-AUC, metrics suite, & champion selection
+│   ├── 08_visualizations.R            # High-resolution ggplot2 publication figures
+│   └── shiny_helpers.R                # UI helper functions, metrics loader, batch scorer
+│
+├── www/
+│   └── styles.css                     # Custom enterprise CSS styling for Shiny app
+│
+├── scratch/                           # Model calibration and threshold tuning experiments
+│
+├── notebooks/
+│   └── insurance_fraud_analysis.Rmd   # Academic case study report (15 sections)
+│
+├── reports/
+│   └── insurance_fraud_analysis.html  # Compiled standalone academic HTML report
+│
+├── outputs/
+│   ├── figures/                       # Publication plots (PR curves, ROC, VIP, etc.)
+│   ├── metrics/                       # CSV summaries of evaluations & Odds Ratios
+│   └── models/                        # Serialized fitted Tidymodels workflows
+│
+└── tests/
+    ├── testthat.R                     # Unit testing harness
+    └── testthat/
+        ├── test-01_load_data.R        # Tests for missing values & factor levels
+        ├── test-02_preprocessing.R    # Tests for recipe steps & zero leakage
+        └── test-03_evaluation.R       # Tests for metrics & Accuracy Paradox
 ```
 
 ---
@@ -305,12 +317,12 @@ shiny::runApp()
 # Rscript run_app.R
 ```
 The dashboard will start at `http://127.0.0.1:7860` featuring:
-* **ðŸ›¡ï¸ Real-Time Claim Scorer:** Interactive claim simulator with 1-click presets (High-Risk, Clean, Borderline), dynamic fraud probability meter, and multi-model consensus.
-* **ðŸ“Š Executive Analytics:** Class imbalance visualizer, Accuracy Paradox metrics, and categorical risk profiles.
-* **âš–ï¸ Model Benchmark:** Live comparison scorecard, PR-AUC / ROC curves, and confusion matrices.
-* **ðŸ“ Batch Claim Audit Engine:** Scorer for preloaded holdout claims or custom CSV uploads with audit triage and CSV download.
-* **ðŸ”¬ Decision Tree Auditor:** Transparent, auditable decision rules for adjusters and viva presentation.
-* **ðŸ“– Methodology & Viva Guide:** Comprehensive defense Q&A and pipeline documentation.
+* **Real-Time Claim Scorer:** Interactive claim simulator with 1-click presets (High-Risk, Clean, Borderline), dynamic fraud probability meter, and multi-model consensus.
+* **Executive Analytics:** Class imbalance visualizer, Accuracy Paradox metrics, and categorical risk profiles.
+* **Model Benchmark:** Live comparison scorecard, PR-AUC / ROC curves, and confusion matrices.
+* **Batch Claim Audit Engine:** Scorer for preloaded holdout claims or custom CSV uploads with audit triage and CSV download.
+* **Decision Tree Auditor:** Transparent, auditable decision rules for adjusters and viva presentation.
+* **Methodology & Viva Guide:** Comprehensive defense Q&A and pipeline documentation.
 
 ---
 
@@ -321,7 +333,7 @@ A comprehensive leakage audit was conducted across 5 risk dimensions:
 2. **Identifier Leakage:** Eliminated `policy_number`, `insured_zip`, and `incident_location`.
 3. **Preprocessing Leakage:** Median and mode imputation statistics are estimated strictly from training folds.
 4. **SMOTE Leakage:** Synthetic minority generation occurs strictly inside the training recipe fold. **No synthetic records ever exist in the test evaluation set.**
-5. **Evaluation Contamination:** Holdout test split ($N = 200$) is preserved in its untouched original empirical distribution.
+5. **Evaluation Contamination:** Holdout test split ($N = 201$) is preserved in its untouched original empirical distribution.
 
 ---
 
@@ -345,5 +357,3 @@ Distributed under the **MIT License**. See `LICENSE` for details.
   howpublished = {\url{https://github.com/Surya9918/insurance-fraud-prediction_using_r}}
 }
 ```
- 
- 
