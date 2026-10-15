@@ -12,6 +12,46 @@ suppressPackageStartupMessages({
   library(readr)
 })
 
+#' Find Optimal Classification Decision Threshold
+#'
+#' Sweeps decision thresholds across candidate values to select the cutoff that
+#' optimizes F1-Score (harmonic mean of Precision and Recall), avoiding degenerate
+#' all-positive or all-negative predictions under class imbalance.
+#'
+#' @param fit_wf Trained workflow.
+#' @param eval_data Evaluation data frame with `fraud_reported`.
+#' @param min_th Numeric. Minimum threshold candidate (default 0.15).
+#' @param max_th Numeric. Maximum threshold candidate (default 0.65).
+#' @param step Numeric. Step size for candidate evaluation (default 0.01).
+#' @return Numeric. Optimal decision threshold.
+#' @export
+find_optimal_threshold <- function(fit_wf, eval_data, min_th = 0.15, max_th = 0.65, step = 0.01) {
+  pred_prob <- predict(fit_wf, eval_data, type = "prob")
+  truth_vec <- eval_data$fraud_reported
+  truth_levels <- levels(truth_vec)
+
+  thresholds <- seq(min_th, max_th, by = step)
+  best_th <- 0.50
+  best_score <- -1
+
+  for (th in thresholds) {
+    p_class <- factor(ifelse(pred_prob$.pred_Yes >= th, "Yes", "No"), levels = truth_levels)
+    rec_val <- yardstick::recall_vec(truth_vec, p_class, event_level = "second")
+    prec_val <- yardstick::precision_vec(truth_vec, p_class, event_level = "second")
+    f1_val <- yardstick::f_meas_vec(truth_vec, p_class, event_level = "second")
+
+    if (!is.na(f1_val) && !is.na(rec_val) && !is.na(prec_val)) {
+      if (f1_val > best_score && rec_val >= 0.50) {
+        best_score <- f1_val
+        best_th <- th
+      }
+    }
+  }
+
+  message(sprintf(">>> Optimized decision threshold selected: %.2f (Peak F1: %.4f)", best_th, best_score))
+  return(best_th)
+}
+
 #' Predict Class and Probabilities on Holdout Test Data
 #'
 #' Generates hard classification labels and calibrated posterior probabilities
@@ -20,6 +60,7 @@ suppressPackageStartupMessages({
 #' @param fit_wf Trained workflow.
 #' @param test_data Unseen test partition (original class distribution, NO SMOTE).
 #' @param model_name Character. Label identifying the model.
+#' @param threshold Numeric. Decision cutoff for positive 'Yes' classification.
 #' @return A tibble containing ground truth, predictions, and class probabilities.
 #' @export
 generate_test_predictions <- function(fit_wf, test_data, model_name = "Model", threshold = 0.5) {

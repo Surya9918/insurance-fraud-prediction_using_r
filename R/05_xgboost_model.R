@@ -19,7 +19,8 @@ suppressPackageStartupMessages({
 
 #' Specify Tunable XGBoost Model
 #'
-#' Sets up a tunable gradient boosted tree specification via the `xgboost` engine.
+#' Sets up a tunable gradient boosted tree specification via the `xgboost` engine,
+#' incorporating `scale_pos_weight = 2.0` to balance class gradient contributions.
 #'
 #' @return A `parsnip` model specification with tunable parameters.
 #' @export
@@ -33,7 +34,7 @@ specify_xgboost_model <- function() {
     loss_reduction = tune::tune(),
     sample_size = tune::tune()
   ) %>%
-    parsnip::set_engine("xgboost", nthread = 2, eval_metric = "aucpr")
+    parsnip::set_engine("xgboost", nthread = 2, scale_pos_weight = 2.0, eval_metric = "aucpr")
 }
 
 #' Build XGBoost Workflow
@@ -58,14 +59,14 @@ build_xgboost_workflow <- function(recipe_spec, model_spec = specify_xgboost_mod
 #' @return A tibble parameter grid.
 #' @export
 create_xgboost_grid <- function(size = 15) {
-  # Customized dial ranges suited for n = 800 training observations
-  dials::grid_latin_hypercube(
-    dials::trees(range = c(100L, 500L)),
-    dials::tree_depth(range = c(3L, 6L)),
-    dials::learn_rate(range = c(-2.3, -1.0), trans = scales::log10_trans()), # 0.005 to 0.1
-    dials::min_n(range = c(3L, 12L)),
-    dials::loss_reduction(range = c(0, 5)),
-    dials::sample_prop(range = c(0.6, 0.95)),
+  # Calibrated dials ranges to prevent loss_reduction pruning explosion
+  dials::grid_space_filling(
+    dials::trees(range = c(80L, 200L)),
+    dials::tree_depth(range = c(2L, 4L)),
+    dials::learn_rate(range = c(-2.0, -1.0), trans = scales::log10_trans()), # 0.01 to 0.1
+    dials::min_n(range = c(3L, 10L)),
+    dials::loss_reduction(range = c(-8, 0.5)), # realistic gamma penalty (0 to 3.16)
+    dials::sample_prop(range = c(0.7, 0.95)),
     size = size
   )
 }
